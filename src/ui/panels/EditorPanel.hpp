@@ -20,6 +20,10 @@ private:
     std::string lastLoadedFile;
     std::vector<char> editBuffer;
     bool hasEdits = false;
+    int cursorIdx = 0;
+    int selectStart = -1;
+    int selectEnd = -1;
+    bool isDraggingMouse = false;
 
     bool showRunnerSettingsPopup = false;
     char compileCmdBuffer[1024] = "";

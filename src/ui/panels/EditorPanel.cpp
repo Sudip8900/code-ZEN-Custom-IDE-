@@ -392,7 +392,7 @@ void EditorPanel::render() {
     ImGui::PopStyleColor();
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Simple C++ IDE");
+    ImGui::TextDisabled("Simple C++ Code Editor");
     ImGui::TextDisabled("C++20 | Text Editing | Code Runner");
     ImGui::Separator();
     ImGui::Spacing();
@@ -427,6 +427,10 @@ void EditorPanel::render() {
     // Reserve buffer space for edits
     editBuffer.resize(
         std::max(editBuffer.size() * 2, static_cast<size_t>(65536)));
+    cursorIdx = 0;
+    selectStart = -1;
+    selectEnd = -1;
+    isDraggingMouse = false;
     hasEdits = false;
   }
 
@@ -492,6 +496,10 @@ void EditorPanel::render() {
                     ImGuiWindowFlags_HorizontalScrollbar);
   ImGui::PopStyleVar();
 
+  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput);
+  }
+
   // Scale only the editor canvas font/size
   ImGui::SetWindowFontScale(UIManager::getInstance().editorFontScale);
 
@@ -520,134 +528,320 @@ void EditorPanel::render() {
   float charWidth = ImGui::CalcTextSize("A").x;
   float lineHeight = ImGui::GetTextLineHeight();
 
-  // Dynamic layout calculation based on character width to support scaling without overlaps
   float sepOffset = 4.5f * charWidth + 10.0f;
   float textStartOffset = sepOffset + 6.0f;
   float viewWidth = ImGui::GetWindowWidth();
   float viewHeight = ImGui::GetWindowHeight();
-  float scrollX = ImGui::GetScrollX();
-  float scrollY = ImGui::GetScrollY();
 
-  std::string widgetId = "##editorInput_" + activeDocPath;
-
-  // Get active ID for cursor state
-  ImGuiID editorId = ImGui::GetID(widgetId.c_str());
-  ImGuiInputTextState *state = ImGui::GetInputTextState(editorId);
-
-  if (state) {
-    int cursorIdx = state->GetCursorPos();
-    int cursorLine = 0;
-    int cursorCol = 0;
-    for (int k = 0; k < cursorIdx && k < textLen; k++) {
-      if (editBuffer[k] == '\n') {
-        cursorLine++;
-        cursorCol = 0;
-      } else {
-        cursorCol++;
-      }
-    }
-    UIManager::getInstance().setCursorPos(cursorLine + 1, cursorCol + 1);
-  }
-
-  // Auto scroll logic to bring cursor in view
-  if (state && state->CursorFollow) {
-    int cursorIdx = state->GetCursorPos();
-    int cursorLine = 0;
-    int cursorCol = 0;
-    for (int k = 0; k < cursorIdx && k < textLen; k++) {
-      if (editBuffer[k] == '\n') {
-        cursorLine++;
-        cursorCol = 0;
-      } else {
-        cursorCol++;
-      }
-    }
-    ImGuiStyle &style = ImGui::GetStyle();
-    float cursorContentX = textStartOffset + cursorCol * charWidth + style.FramePadding.x;
-    float cursorContentY = cursorLine * lineHeight + style.FramePadding.y;
-
-    if (cursorContentY < scrollY) {
-      ImGui::SetScrollY(cursorContentY);
-    } else if (cursorContentY + lineHeight >
-               scrollY + viewHeight - style.FramePadding.y * 2.0f - 20.0f) {
-      ImGui::SetScrollY(cursorContentY + lineHeight - viewHeight +
-                        style.FramePadding.y * 2.0f + 20.0f);
-    }
-
-    if (cursorContentX < scrollX) {
-      ImGui::SetScrollX(cursorContentX);
-    } else if (cursorContentX + charWidth >
-               scrollX + viewWidth - style.FramePadding.x * 2.0f - 20.0f) {
-      ImGui::SetScrollX(cursorContentX + charWidth - viewWidth +
-                        style.FramePadding.x * 2.0f + 20.0f);
-    }
-    state->CursorFollow = false;
-  }
-
-  // Set the size of the InputTextMultiline to content size so it doesn't scroll
-  // inside itself
-  ImVec2 editorSize = ImVec2(std::max(maxLineLen * charWidth + 100.0f,
-                                      ImGui::GetContentRegionAvail().x),
-                             std::max(totalLines * lineHeight + 50.0f,
-                                      ImGui::GetContentRegionAvail().y));
-
-  // Parse text for highlighting ranges dynamically based on extension
-  fs::path filePath(activeDocPath);
-  std::string ext = filePath.extension().string();
-  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-  std::vector<StyledRange> ranges =
-      parseGeneric(editBuffer.data(), ext, themeColors);
-
-  // Position cursor for the text area offset
-  ImGui::SetCursorPosX(textStartOffset);
-
-  // Push transparent style colors for the multiline input field
-  ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
-  ImGui::PushStyleColor(ImGuiCol_Text,
-                        ImVec4(0.0f, 0.0f, 0.0f, 0.01f)); // transparent text
-
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
-
-  auto tabCallback = [](ImGuiInputTextCallbackData *data) -> int {
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
-      for (int i = 0; i < data->BufTextLen; i++) {
-        if (data->Buf[i] == '\t') {
-          data->DeleteChars(i, 1);
-          data->InsertChars(i, "    ");
-          i += 3; // Skip the inserted spaces
-        }
-      }
-    }
-    return 0;
-  };
-
-  ImGuiInputTextFlags editFlags =
-      ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackEdit;
-  if (ImGui::InputTextMultiline(widgetId.c_str(), editBuffer.data(),
-                                editBuffer.size(), editorSize, editFlags,
-                                tabCallback, this)) {
-    hasEdits = true;
-  }
-
-  // Get screen coordinate where text content starts inside InputTextMultiline
-  ImVec2 itemMin = ImGui::GetItemRectMin();
-  ImGuiStyle &style = ImGui::GetStyle();
-  float startX = itemMin.x + style.FramePadding.x;
-  float startY = itemMin.y + style.FramePadding.y;
-
-  ImDrawList *drawList = ImGui::GetWindowDrawList();
-
-  // Push font parameters
   ImFont *font = ImGui::GetFont();
   float fontSize = ImGui::GetFontSize();
+
+  // Create content size and setup canvas
+  ImVec2 contentSize = ImVec2(maxLineLen * charWidth + 150.0f, totalLines * lineHeight + 80.0f);
+  ImGui::SetCursorPos(ImVec2(0, 0));
+  ImGui::InvisibleButton("##editorCanvas", contentSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+
+  // Mouse interaction
+  ImVec2 mousePos = ImGui::GetMousePos();
+  ImVec2 itemMin = ImGui::GetItemRectMin(); // Top-left of the canvas in screen coordinates
+  ImVec2 canvasStart = ImVec2(itemMin.x + textStartOffset, itemMin.y);
+
+  // Helper function to find index from mouse coordinate
+  auto getIdxFromMouse = [&](ImVec2 mPos, ImVec2 startPos, const std::vector<int>& offsets, int tLen, ImFont* f, float fSize, float lHeight) -> int {
+    float localY = mPos.y - startPos.y;
+    int line = static_cast<int>(localY / lHeight);
+    line = std::clamp(line, 0, (int)offsets.size() - 1);
+    
+    int lineStart = offsets[line];
+    int lineEnd = (line + 1 < (int)offsets.size()) ? (offsets[line + 1] - 1) : tLen;
+    if (lineEnd > lineStart && editBuffer[lineEnd - 1] == '\r') {
+        lineEnd--;
+    }
+    
+    float localX = mPos.x - startPos.x;
+    if (localX <= 0.0f) {
+        return lineStart;
+    }
+    
+    int closestIdx = lineStart;
+    float minDiff = FLT_MAX;
+    for (int k = lineStart; k <= lineEnd; k++) {
+        float xOffset = f->CalcTextSizeA(fSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + k).x;
+        float diff = std::abs(localX - xOffset);
+        if (diff < minDiff) {
+            minDiff = diff;
+            closestIdx = k;
+        }
+    }
+    return closestIdx;
+  };
+
+  if (ImGui::IsItemClicked(0)) {
+      cursorIdx = getIdxFromMouse(mousePos, canvasStart, lineOffsets, textLen, font, fontSize, lineHeight);
+      selectStart = cursorIdx;
+      selectEnd = cursorIdx;
+      isDraggingMouse = true;
+  }
+
+  if (isDraggingMouse) {
+      if (ImGui::IsMouseDragging(0)) {
+          cursorIdx = getIdxFromMouse(mousePos, canvasStart, lineOffsets, textLen, font, fontSize, lineHeight);
+          selectEnd = cursorIdx;
+      }
+      if (ImGui::IsMouseReleased(0)) {
+          isDraggingMouse = false;
+      }
+  }
+
+  // Keyboard interaction
+  bool isFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+  if (isFocused) {
+      ImGuiIO &io = ImGui::GetIO();
+      bool shift = io.KeyShift;
+      bool ctrl = io.KeyCtrl;
+      int prevCursor = cursorIdx;
+
+      auto updateSelection = [&](int prev) {
+          if (shift) {
+              if (selectStart == -1) {
+                  selectStart = prev;
+              }
+              selectEnd = cursorIdx;
+          } else {
+              selectStart = -1;
+              selectEnd = -1;
+          }
+      };
+
+      auto deleteSelectedText = [&]() -> bool {
+          if (selectStart != -1 && selectEnd != -1 && selectStart != selectEnd) {
+              int s = std::min(selectStart, selectEnd);
+              int e = std::max(selectStart, selectEnd);
+              editBuffer.erase(editBuffer.begin() + s, editBuffer.begin() + e);
+              cursorIdx = s;
+              selectStart = -1;
+              selectEnd = -1;
+              hasEdits = true;
+              return true;
+          }
+          return false;
+      };
+
+      // Character input
+      for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+          unsigned int c = io.InputQueueCharacters[i];
+          if (c >= 32 && c != 127) { // Printable characters
+              deleteSelectedText();
+              editBuffer.insert(editBuffer.begin() + cursorIdx, static_cast<char>(c));
+              cursorIdx++;
+              hasEdits = true;
+          }
+      }
+
+      // Navigation & Editing
+      if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true)) {
+          if (cursorIdx > 0) {
+              cursorIdx--;
+              updateSelection(prevCursor);
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) {
+          if (cursorIdx < textLen) {
+              cursorIdx++;
+              updateSelection(prevCursor);
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) {
+          int curLine = 0;
+          while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+              curLine++;
+          }
+          if (curLine > 0) {
+              int curCol = cursorIdx - lineOffsets[curLine];
+              int prevLineStart = lineOffsets[curLine - 1];
+              int prevLineEnd = lineOffsets[curLine] - 1;
+              if (prevLineEnd > prevLineStart && editBuffer[prevLineEnd - 1] == '\r') {
+                  prevLineEnd--;
+              }
+              int prevLineLen = prevLineEnd - prevLineStart;
+              int newCol = std::min(curCol, prevLineLen);
+              cursorIdx = prevLineStart + newCol;
+              updateSelection(prevCursor);
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) {
+          int curLine = 0;
+          while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+              curLine++;
+          }
+          if (curLine + 1 < totalLines) {
+              int curCol = cursorIdx - lineOffsets[curLine];
+              int nextLineStart = lineOffsets[curLine + 1];
+              int nextLineEnd = (curLine + 2 < totalLines) ? (lineOffsets[curLine + 2] - 1) : textLen;
+              if (nextLineEnd > nextLineStart && editBuffer[nextLineEnd - 1] == '\r') {
+                  nextLineEnd--;
+              }
+              int nextLineLen = nextLineEnd - nextLineStart;
+              int newCol = std::min(curCol, nextLineLen);
+              cursorIdx = nextLineStart + newCol;
+              updateSelection(prevCursor);
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_Home, true)) {
+          int curLine = 0;
+          while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+              curLine++;
+          }
+          cursorIdx = lineOffsets[curLine];
+          updateSelection(prevCursor);
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_End, true)) {
+          int curLine = 0;
+          while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+              curLine++;
+          }
+          int lineEnd = (curLine + 1 < totalLines) ? (lineOffsets[curLine + 1] - 1) : textLen;
+          if (lineEnd > lineOffsets[curLine] && editBuffer[lineEnd - 1] == '\r') {
+              lineEnd--;
+          }
+          cursorIdx = lineEnd;
+          updateSelection(prevCursor);
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_Backspace, true)) {
+          if (!deleteSelectedText()) {
+              if (cursorIdx > 0) {
+                  if (cursorIdx >= 2 && editBuffer[cursorIdx - 2] == '\r' && editBuffer[cursorIdx - 1] == '\n') {
+                      editBuffer.erase(editBuffer.begin() + cursorIdx - 2, editBuffer.begin() + cursorIdx);
+                      cursorIdx -= 2;
+                  } else {
+                      editBuffer.erase(editBuffer.begin() + cursorIdx - 1);
+                      cursorIdx--;
+                  }
+                  hasEdits = true;
+              }
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_Delete, true)) {
+          if (!deleteSelectedText()) {
+              if (cursorIdx < textLen) {
+                  if (cursorIdx + 1 < textLen && editBuffer[cursorIdx] == '\r' && editBuffer[cursorIdx + 1] == '\n') {
+                      editBuffer.erase(editBuffer.begin() + cursorIdx, editBuffer.begin() + cursorIdx + 2);
+                  } else {
+                      editBuffer.erase(editBuffer.begin() + cursorIdx);
+                  }
+                  hasEdits = true;
+              }
+          }
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_Enter, true)) {
+          deleteSelectedText();
+          editBuffer.insert(editBuffer.begin() + cursorIdx, '\n');
+          cursorIdx++;
+          hasEdits = true;
+      }
+      else if (ImGui::IsKeyPressed(ImGuiKey_Tab, true)) {
+          deleteSelectedText();
+          editBuffer.insert(editBuffer.begin() + cursorIdx, 4, ' ');
+          cursorIdx += 4;
+          hasEdits = true;
+      }
+
+      if (ctrl) {
+          if (ImGui::IsKeyPressed(ImGuiKey_A)) {
+              selectStart = 0;
+              selectEnd = textLen;
+              cursorIdx = textLen;
+          }
+          else if (ImGui::IsKeyPressed(ImGuiKey_C) && selectStart != -1 && selectEnd != -1 && selectStart != selectEnd) {
+              int s = std::min(selectStart, selectEnd);
+              int e = std::max(selectStart, selectEnd);
+              std::string selStr(editBuffer.begin() + s, editBuffer.begin() + e);
+              ImGui::SetClipboardText(selStr.c_str());
+          }
+          else if (ImGui::IsKeyPressed(ImGuiKey_X) && selectStart != -1 && selectEnd != -1 && selectStart != selectEnd) {
+              int s = std::min(selectStart, selectEnd);
+              int e = std::max(selectStart, selectEnd);
+              std::string selStr(editBuffer.begin() + s, editBuffer.begin() + e);
+              ImGui::SetClipboardText(selStr.c_str());
+              deleteSelectedText();
+          }
+          else if (ImGui::IsKeyPressed(ImGuiKey_V)) {
+              const char* clip = ImGui::GetClipboardText();
+              if (clip && strlen(clip) > 0) {
+                  deleteSelectedText();
+                  std::string pasteStr(clip);
+                  std::string cleanPaste;
+                  cleanPaste.reserve(pasteStr.size() * 2);
+                  for (char c : pasteStr) {
+                      if (c == '\t') cleanPaste.append("    ");
+                      else if (c != '\r') cleanPaste.push_back(c);
+                  }
+                  editBuffer.insert(editBuffer.begin() + cursorIdx, cleanPaste.begin(), cleanPaste.end());
+                  cursorIdx += (int)cleanPaste.size();
+                  hasEdits = true;
+              }
+          }
+      }
+  }
+
+  // Update status bar position info
+  int cursorLine = 0;
+  int cursorCol = 0;
+  for (int k = 0; k < cursorIdx && k < textLen; k++) {
+    if (editBuffer[k] == '\n') {
+      cursorLine++;
+      cursorCol = 0;
+    } else if (editBuffer[k] == '\r') {
+      // Skip carriage return
+    } else {
+      cursorCol++;
+    }
+  }
+  UIManager::getInstance().setCursorPos(cursorLine + 1, cursorCol + 1);
+
+  // Auto scroll logic to bring cursor in view
+  static int lastCursorPosForScroll = -1;
+  if (cursorIdx != lastCursorPosForScroll) {
+      lastCursorPosForScroll = cursorIdx;
+      
+      int curLine = 0;
+      while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+          curLine++;
+      }
+      
+      int lineStart = lineOffsets[curLine];
+      int lineEnd = (curLine + 1 < totalLines) ? (lineOffsets[curLine + 1] - 1) : textLen;
+      int clampedCursor = std::clamp(cursorIdx, lineStart, lineEnd);
+      
+      float textOffset = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + clampedCursor).x;
+      float cursorContentX = textStartOffset + textOffset;
+      float cursorContentY = curLine * lineHeight;
+      
+      float scrollX = ImGui::GetScrollX();
+      float scrollY = ImGui::GetScrollY();
+      
+      if (cursorContentY < scrollY) {
+          ImGui::SetScrollY(cursorContentY);
+      } else if (cursorContentY + lineHeight > scrollY + viewHeight - 40.0f) {
+          ImGui::SetScrollY(cursorContentY + lineHeight - viewHeight + 40.0f);
+      }
+      
+      if (cursorContentX < scrollX + textStartOffset + 20.0f) {
+          ImGui::SetScrollX(std::max(0.0f, cursorContentX - textStartOffset - 20.0f));
+      } else if (cursorContentX > scrollX + viewWidth - 50.0f) {
+          ImGui::SetScrollX(cursorContentX - viewWidth + 50.0f);
+      }
+  }
+
+  // Draw Gutter & Code Text
+  ImDrawList *drawList = ImGui::GetWindowDrawList();
+  float startX = itemMin.x + textStartOffset;
+  float startY = itemMin.y;
 
   // 1. Draw Line Numbers fixed horizontally
   float lineNumX = ImGui::GetWindowPos().x + sepOffset - 4.0f * charWidth - 4.0f;
   for (int i = 0; i < totalLines; i++) {
     float lineY = startY + i * lineHeight;
-    // Check if the line is vertically visible before drawing to optimize
     if (lineY + lineHeight >= ImGui::GetWindowPos().y &&
         lineY <= ImGui::GetWindowPos().y + viewHeight) {
       char numBuf[16];
@@ -666,15 +860,47 @@ void EditorPanel::render() {
                             themeColors.lineNumbers.z, 0.2f),
                     1.0f);
 
-  // 2. Draw Highlighted Text segments
+  // 2. Draw Selection Highlights
+  if (selectStart != -1 && selectEnd != -1 && selectStart != selectEnd) {
+      int selMin = std::min(selectStart, selectEnd);
+      int selMax = std::max(selectStart, selectEnd);
+      
+      for (int i = 0; i < totalLines; i++) {
+          int lineStart = lineOffsets[i];
+          int lineEnd = (i + 1 < totalLines) ? (lineOffsets[i + 1] - 1) : textLen;
+          if (lineEnd > lineStart && editBuffer[lineEnd - 1] == '\r') {
+              lineEnd--;
+          }
+          
+          if (selMin < lineEnd && selMax > lineStart) {
+              int selS = std::max(selMin, lineStart);
+              int selE = std::min(selMax, lineEnd);
+              
+              float xStart = startX + font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + selS).x;
+              float xEnd = startX + font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + selE).x;
+              float lineY = startY + i * lineHeight;
+              
+              drawList->AddRectFilled(
+                  ImVec2(xStart, lineY),
+                  ImVec2(xEnd, lineY + lineHeight),
+                  ImColor(0.26f, 0.59f, 0.98f, 0.35f)
+              );
+          }
+      }
+  }
+
+  // 3. Draw Highlighted Text segments
+  fs::path filePath(activeDocPath);
+  std::string ext = filePath.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+  std::vector<StyledRange> ranges = parseGeneric(editBuffer.data(), ext, themeColors);
+
   for (int i = 0; i < totalLines; i++) {
     float lineY = startY + i * lineHeight;
-    // Only draw if line is vertically visible
     if (lineY + lineHeight >= ImGui::GetWindowPos().y &&
         lineY <= ImGui::GetWindowPos().y + viewHeight) {
       int lineStart = lineOffsets[i];
       int lineEnd = (i + 1 < totalLines) ? (lineOffsets[i + 1] - 1) : textLen;
-      // strip trailing \r if present
       if (lineEnd > lineStart && editBuffer[lineEnd - 1] == '\r') {
         lineEnd--;
       }
@@ -682,8 +908,8 @@ void EditorPanel::render() {
       std::vector<StyledSegment> segments =
           segmentLine(lineStart, lineEnd, ranges, themeColors.text);
       for (const auto &seg : segments) {
-        int colStart = seg.start - lineStart;
-        float segmentX = startX + colStart * charWidth;
+        float textOffset = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + seg.start).x;
+        float segmentX = startX + textOffset;
         drawList->AddText(font, fontSize, ImVec2(segmentX, lineY),
                           ImColor(seg.color), editBuffer.data() + seg.start,
                           editBuffer.data() + seg.end);
@@ -691,10 +917,40 @@ void EditorPanel::render() {
     }
   }
 
+  // 4. Draw Custom Blinking Cursor
+  if (isFocused) {
+    int curLine = 0;
+    while (curLine + 1 < totalLines && lineOffsets[curLine + 1] <= cursorIdx) {
+      curLine++;
+    }
 
+    int lineStart = lineOffsets[curLine];
+    int lineEnd = (curLine + 1 < totalLines) ? (lineOffsets[curLine + 1] - 1) : textLen;
+    int clampedCursorIdx = std::clamp(cursorIdx, lineStart, lineEnd);
 
-  ImGui::PopStyleVar();
-  ImGui::PopStyleColor(4);
+    float textOffset = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, editBuffer.data() + lineStart, editBuffer.data() + clampedCursorIdx).x;
+    float cursorX = startX + textOffset;
+    float cursorY = startY + curLine * lineHeight;
+
+    if (cursorY + lineHeight >= ImGui::GetWindowPos().y &&
+        cursorY <= ImGui::GetWindowPos().y + viewHeight) {
+      
+      float opacity = 1.0f;
+      if (isFocused && !isDraggingMouse) {
+        // Smooth pulsing blink animation (1.0s cycle)
+        float time = static_cast<float>(ImGui::GetTime());
+        float phase = fmod(time, 1.0f);
+        opacity = 0.5f + 0.5f * cosf(phase * 2.0f * 3.14159265f);
+      }
+
+      float cursorWidth = 2.0f * UIManager::getInstance().editorFontScale;
+      drawList->AddRectFilled(
+          ImVec2(cursorX, cursorY),
+          ImVec2(cursorX + cursorWidth, cursorY + lineHeight),
+          ImColor(themeColors.text.x, themeColors.text.y, themeColors.text.z, opacity)
+      );
+    }
+  }
 
   ImGui::EndChild();
 

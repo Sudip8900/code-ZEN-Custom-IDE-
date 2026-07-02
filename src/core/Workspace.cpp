@@ -27,7 +27,14 @@ namespace fs = std::experimental::filesystem;
 
 namespace forge {
 
-Workspace::Workspace() : isScanning(false) {}
+Workspace::Workspace() : isScanning(false), cancelScan(false) {}
+
+Workspace::~Workspace() {
+    cancelScan = true;
+    if (scanThread.joinable()) {
+        scanThread.join();
+    }
+}
 
 Workspace& Workspace::getInstance() {
     static Workspace instance;
@@ -61,6 +68,11 @@ bool Workspace::openProject(const std::string& folderPath) {
 }
 
 void Workspace::closeProject() {
+    cancelScan = true;
+    if (scanThread.joinable()) {
+        scanThread.join();
+    }
+
     std::lock_guard<std::mutex> lock(workspaceMutex);
     FORGE_LOG_INFO("Workspace", "Closing project: " + projectName);
     
@@ -90,7 +102,12 @@ void Workspace::refreshFileTreeAsync() {
         return; // Scanning already in progress
     }
 
-    std::thread([this, path, name]() {
+    if (scanThread.joinable()) {
+        scanThread.join();
+    }
+
+    cancelScan = false;
+    scanThread = std::thread([this, path, name]() {
         WorkspaceFile newTree;
         newTree.name = name;
         newTree.path = path;
@@ -100,16 +117,20 @@ void Workspace::refreshFileTreeAsync() {
 
         {
             std::lock_guard<std::mutex> lock(workspaceMutex);
-            cachedTree = std::move(newTree);
+            if (!cancelScan) {
+                cachedTree = std::move(newTree);
+            }
         }
 
         isScanning = false;
-    }).detach();
+    });
 }
 
 void Workspace::buildTreeRecursive(const std::string& path, WorkspaceFile& node) {
+    if (cancelScan) return;
     try {
         for (const auto& entry : fs::directory_iterator(path)) {
+            if (cancelScan) return;
             std::string name = entry.path().filename().string();
             
             // Ignore heavy IDE/SCCS and compiler folders to maintain extreme performance

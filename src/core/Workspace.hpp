@@ -42,7 +42,7 @@ public:
 
 private:
     Workspace();
-    ~Workspace() = default;
+    ~Workspace();
     Workspace(const Workspace&) = delete;
     Workspace& operator=(const Workspace&) = delete;
 
@@ -55,6 +55,8 @@ private:
     // Cache members
     WorkspaceFile cachedTree;
     std::atomic<bool> isScanning{false};
+    std::atomic<bool> cancelScan{false};
+    std::thread scanThread;
 
     // Cache of open files content (path -> content)
     std::unordered_map<std::string, std::string> openFiles;

@@ -48,23 +48,7 @@ void UIManager::addPanel(std::shared_ptr<Panel> panel) {
 }
 
 void UIManager::renderAll(bool showMenuBar) {
-  // Handle UI Scaling Shortcuts (Only Code Editor Font)
   ImGuiIO &io = ImGui::GetIO();
-  if (io.KeyCtrl) {
-    if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) {
-      editorFontScale += 0.1f;
-      if (editorFontScale > 3.0f)
-        editorFontScale = 3.0f;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) {
-      editorFontScale -= 0.1f;
-      if (editorFontScale < 0.5f)
-        editorFontScale = 0.5f;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_0)) {
-      editorFontScale = 1.0f;
-    }
-  }
 
   if (!themeApplied) {
     applyThemeByName(activeThemeName);

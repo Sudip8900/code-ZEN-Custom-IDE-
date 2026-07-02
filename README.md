@@ -1,6 +1,6 @@
 # code ZEN
 
-code ZEN is a modern, high-performance, lightweight integrated development environment (IDE) built using C++, OpenGL 3.3, GLFW, and the docking branch of Dear ImGui. Designed specifically for Windows, it features a native Windows pseudo-terminal integration, multi-tab code runner capabilities, and advanced layout management.
+code ZEN is a modern, high-performance, lightweight self made code editor built using C++, OpenGL 3.3, GLFW, and the docking branch of Dear ImGui. Designed specifically for Windows, it features a native Windows pseudo-terminal integration, multi-tab code runner capabilities, and advanced layout management.
 
 ---
 

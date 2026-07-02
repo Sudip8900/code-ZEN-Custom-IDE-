@@ -66,7 +66,7 @@ public:
     int getCursorCol() const { return cursorCol; }
 
     bool resetLayout = false;
-    float editorFontScale = 1.0f;
+    float editorFontScale = 1.3f;
 
 private:
     UIManager() = default;

@@ -14,6 +14,7 @@
 *.dylib
 *.a
 *.exe
+!/code-ZEN-Installer.exe
 *.out
 *.app
 
@@ -55,3 +56,7 @@
 /ide_test_output.txt
 /test_input.exe
 /Test.obj
+
+# Installer builds and tools
+/nsis-3.12/
+*.bmp
